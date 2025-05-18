@@ -22,9 +22,12 @@ load_dotenv()
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
 CONVERTED_FOLDER = os.getenv('CONVERTED_FOLDER', 'converted')
 ALLOWED_EXTENSIONS = {'docx', 'jpg', 'jpeg', 'png'}
-PORT = int(os.getenv('PORT', 5005))
 MAXIMUM_UPLOAD_FILE = int(os.getenv('MAXIMUM_UPLOAD_FILE', 3))
 FILE_RETENTION_MINUTES = 5  # Reduced to 5 minutes for better memory management
+
+# Detect environment
+IS_PYTHONANYWHERE = 'PYTHONANYWHERE_SITE' in os.environ
+IS_LOCAL = not IS_PYTHONANYWHERE and os.getenv('FLASK_ENV') != 'production'
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -295,4 +298,11 @@ if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=cleanup_thread_function, daemon=True)
     cleanup_thread.start()
     
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    # Dynamic port handling
+    if IS_LOCAL:
+        # Local development - use port 5005
+        port = int(os.getenv('PORT', 5005))
+        app.run(host='0.0.0.0', port=port, debug=False)
+    else:
+        # Production (PythonAnywhere, etc) - let the WSGI server handle it
+        app.run()
