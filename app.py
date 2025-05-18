@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import Flask, render_template, request, send_file, jsonify, abort
 from werkzeug.utils import secure_filename
 from PIL import Image
 import img2pdf
@@ -19,8 +19,8 @@ import shutil
 load_dotenv()
 
 # Get configuration from environment variables with defaults
-UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
-CONVERTED_FOLDER = os.getenv('CONVERTED_FOLDER', 'converted')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, os.getenv('UPLOAD_FOLDER', 'uploads'))
 ALLOWED_EXTENSIONS = {'docx', 'jpg', 'jpeg', 'png'}
 MAXIMUM_UPLOAD_FILE = int(os.getenv('MAXIMUM_UPLOAD_FILE', 3))
 FILE_RETENTION_MINUTES = 5  # Reduced to 5 minutes for better memory management
@@ -31,24 +31,33 @@ IS_LOCAL = not IS_PYTHONANYWHERE and os.getenv('FLASK_ENV') != 'production'
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['CONVERTED_FOLDER'] = CONVERTED_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Ensure directories exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(CONVERTED_FOLDER, exist_ok=True)
+# Ensure directories exist and have proper permissions
+def ensure_directories():
+    """Ensure upload directory exists with proper permissions"""
+    if not os.path.exists(UPLOAD_FOLDER):
+        os.makedirs(UPLOAD_FOLDER, mode=0o755, exist_ok=True)
+    # Set proper permissions if directory already exists
+    else:
+        os.chmod(UPLOAD_FOLDER, 0o755)
 
-# Track converted files and their creation times
+# Call it when app starts
+ensure_directories()
+
+# We don't need CONVERTED_FOLDER anymore as we'll stream directly
+# Remove tracking of converted files as we'll handle them immediately
 converted_files = {}
 
-def convert_docx_to_pdf(input_path, output_path):
-    """Convert DOCX to PDF using pure Python libraries"""
+def convert_docx_to_pdf(input_path):
+    """Convert DOCX to PDF and return BytesIO object"""
     try:
         # Read the DOCX file
         doc = Document(input_path)
         
-        # Create PDF
-        c = canvas.Canvas(output_path, pagesize=letter)
+        # Create PDF in memory
+        output_pdf = BytesIO()
+        c = canvas.Canvas(output_pdf, pagesize=letter)
         width, height = letter
         y = height - inch  # Start from top of page
         
@@ -66,7 +75,6 @@ def convert_docx_to_pdf(input_path, output_path):
             # Write text
             text = para.text
             if text.strip():  # Only process non-empty paragraphs
-                # Handle text that might be too long for the page width
                 if c.stringWidth(text, "Helvetica", 12) > (width - 2*inch):
                     words = text.split()
                     line = []
@@ -74,44 +82,38 @@ def convert_docx_to_pdf(input_path, output_path):
                         line.append(word)
                         test_line = ' '.join(line)
                         if c.stringWidth(test_line, "Helvetica", 12) > (width - 2*inch):
-                            line.pop()  # Remove last word
+                            line.pop()
                             c.drawString(inch, y, ' '.join(line))
                             y -= 20
-                            line = [word]  # Start new line with the word that didn't fit
-                    if line:  # Draw any remaining text
+                            line = [word]
+                    if line:
                         c.drawString(inch, y, ' '.join(line))
                 else:
                     c.drawString(inch, y, text)
-                y -= 20  # Move down for next line
+                y -= 20
         
-        # Ensure we save the last page
-        if c.getPageNumber() > 0:
-            c.save()
-        return True
+        c.save()
+        output_pdf.seek(0)
+        return output_pdf
         
     except Exception as e:
-        print(f"Error in convert_docx_to_pdf: {str(e)}")  # Debug logging
+        print(f"Error in convert_docx_to_pdf: {str(e)}")
         raise Exception(f"Error converting Word document: {str(e)}")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def force_cleanup_folders():
-    """Force cleanup of both upload and converted folders"""
+    """Force cleanup of upload folder"""
     try:
+        # Ensure directory exists before cleaning
+        ensure_directories()
+        
         # Clean upload folder
         if os.path.exists(UPLOAD_FOLDER):
             shutil.rmtree(UPLOAD_FOLDER)
-            os.makedirs(UPLOAD_FOLDER)
+            os.makedirs(UPLOAD_FOLDER, mode=0o755)
             
-        # Clean converted folder
-        if os.path.exists(CONVERTED_FOLDER):
-            shutil.rmtree(CONVERTED_FOLDER)
-            os.makedirs(CONVERTED_FOLDER)
-            
-        # Reset tracking
-        converted_files.clear()
-        
     except Exception as e:
         print(f"Error during force cleanup: {str(e)}")
 
@@ -121,39 +123,35 @@ def clean_old_files():
     files_to_delete = []
     
     try:
+        # Ensure directory exists
+        ensure_directories()
+        
         # Identify old files
-        for filename, creation_time in list(converted_files.items()):
-            if current_time - creation_time > timedelta(minutes=FILE_RETENTION_MINUTES):
+        for filename in os.listdir(UPLOAD_FOLDER):
+            if current_time - datetime.fromtimestamp(os.path.getctime(os.path.join(UPLOAD_FOLDER, filename))) > timedelta(minutes=FILE_RETENTION_MINUTES):
                 files_to_delete.append(filename)
         
         # Delete old files
         for filename in files_to_delete:
-            file_path = os.path.join(app.config['CONVERTED_FOLDER'], filename)
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                converted_files.pop(filename, None)
                 print(f"Cleaned up old file: {filename}")
             except Exception as e:
                 print(f"Error deleting {file_path}: {e}")
 
-        # Clean up any orphaned files in both folders
-        for folder in [UPLOAD_FOLDER, CONVERTED_FOLDER]:
-            if os.path.exists(folder):
-                for filename in os.listdir(folder):
-                    if filename not in converted_files:
-                        file_path = os.path.join(folder, filename)
-                        try:
-                            if os.path.isfile(file_path):
-                                os.unlink(file_path)
-                                print(f"Cleaned up orphaned file: {filename}")
-                        except Exception as e:
-                            print(f"Error deleting orphaned file {file_path}: {e}")
+        # Clean up any orphaned files in the folder
+        for filename in os.listdir(UPLOAD_FOLDER):
+            if filename not in converted_files:
+                file_path = os.path.join(UPLOAD_FOLDER, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                        print(f"Cleaned up orphaned file: {filename}")
+                except Exception as e:
+                    print(f"Error deleting orphaned file {file_path}: {e}")
                             
-        # If converted_files is empty, force cleanup to ensure fresh state
-        if not converted_files:
-            force_cleanup_folders()
-            
     except Exception as e:
         print(f"Error during cleanup: {str(e)}")
 
@@ -185,88 +183,61 @@ def upload_file():
         # Clean old files before processing new ones
         clean_old_files()
         
-        # Get current number of files (excluding expired ones)
-        current_time = datetime.now()
-        active_files = {f: t for f, t in converted_files.items() 
-                       if current_time - t <= timedelta(minutes=FILE_RETENTION_MINUTES)}
-        
-        # Check if we've reached the maximum number of files
-        if len(active_files) >= MAXIMUM_UPLOAD_FILE:
-            return jsonify({'error': 'Maximum number of files exceeded'}), 400
-
-        # Secure the filename and create paths
+        # Create a temporary file
         filename = secure_filename(uploaded_file.filename)
-        input_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         name, ext = os.path.splitext(filename)
-        output_pdf = os.path.join(app.config['CONVERTED_FOLDER'], name + ".pdf")
-
-        # Save the uploaded file
-        uploaded_file.save(input_path)
-        print(f"File saved to: {input_path}")  # Debug logging
+        
+        # Save uploaded file to memory
+        file_content = uploaded_file.read()
+        input_buffer = BytesIO(file_content)
 
         try:
             ext = ext.lower()
             if ext == ".docx":
-                success = convert_docx_to_pdf(input_path, output_pdf)
-                if not success:
-                    raise Exception("Failed to convert document")
+                # Convert DOCX directly from memory
+                doc = Document(input_buffer)
+                pdf_buffer = convert_docx_to_pdf(input_buffer)
             elif ext in ['.jpg', '.jpeg', '.png']:
-                # Fix image to PDF conversion
-                image = Image.open(input_path)
-                image_bytes = BytesIO()
+                # Convert image directly from memory
+                image = Image.open(input_buffer)
+                pdf_buffer = BytesIO()
                 if image.mode in ("RGBA", "LA"):
-                    # Convert RGBA images to RGB
                     background = Image.new("RGB", image.size, (255, 255, 255))
                     background.paste(image, mask=image.split()[-1])
-                    background.save(image_bytes, format="PDF")
+                    background.save(pdf_buffer, format="PDF")
                 else:
-                    image.save(image_bytes, format="PDF")
-                
-                with open(output_pdf, "wb") as f:
-                    f.write(image_bytes.getvalue())
+                    image.save(pdf_buffer, format="PDF")
+                pdf_buffer.seek(0)
 
-            # Verify the PDF was created
-            if not os.path.exists(output_pdf):
-                raise Exception("PDF file was not created")
+            # Save the PDF buffer to a temporary file
+            temp_pdf_path = os.path.join(UPLOAD_FOLDER, f"{name}.pdf")
+            with open(temp_pdf_path, 'wb') as f:
+                f.write(pdf_buffer.getvalue())
 
-            print(f"PDF created at: {output_pdf}")  # Debug logging
+            # Return success with filename
+            return jsonify({'filename': f"{name}.pdf"}), 200
 
-            # Track the converted file
-            converted_files[name + '.pdf'] = datetime.now()
-
-        finally:
-            # Clean up the uploaded file immediately after conversion
-            if os.path.exists(input_path):
-                os.remove(input_path)
-                print(f"Cleaned up uploaded file: {input_path}")
-        
-        return jsonify({
-            'message': 'File converted successfully',
-            'filename': name + '.pdf'
-        }), 200
+        except Exception as e:
+            print(f"Error in conversion: {str(e)}")
+            return jsonify({'error': str(e)}), 500
 
     except Exception as e:
-        print(f"Error in upload_file: {str(e)}")  # Debug logging
-        # Clean up any uploaded file in case of error
-        if 'input_path' in locals() and os.path.exists(input_path):
-            os.remove(input_path)
+        print(f"Error in upload_file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
 def download_file(filename):
+    """Handle file downloads"""
     try:
-        # Check if file exists and is tracked
-        if filename not in converted_files:
-            return jsonify({'error': 'File not found or expired'}), 404
-            
-        file_path = os.path.join(app.config['CONVERTED_FOLDER'], filename)
-        print(f"Attempting to download: {file_path}")  # Debug logging
+        # Ensure the filename is secure
+        filename = secure_filename(filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
         
+        # Check if file exists
         if not os.path.exists(file_path):
-            print(f"File not found: {file_path}")  # Debug logging
-            converted_files.pop(filename, None)  # Remove from tracking if file doesn't exist
             return jsonify({'error': 'File not found'}), 404
             
+        # Send the file
         return send_file(
             file_path,
             mimetype='application/pdf',
@@ -274,7 +245,7 @@ def download_file(filename):
             download_name=filename
         )
     except Exception as e:
-        print(f"Error in download_file: {str(e)}")  # Debug logging
+        print(f"Error in download_file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.errorhandler(413)

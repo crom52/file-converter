@@ -16,9 +16,12 @@ function downloadFile(event, filename) {
     fetch(`/download/${filename}`)
         .then(response => {
             if (!response.ok) {
-                return response.json().then(err => {
-                    throw new Error(err.error || 'Download failed');
-                });
+                if (response.headers.get('content-type')?.includes('application/json')) {
+                    return response.json().then(err => {
+                        throw new Error(err.error || 'Download failed');
+                    });
+                }
+                throw new Error('Download failed');
             }
             return response.blob();
         })
@@ -33,6 +36,7 @@ function downloadFile(event, filename) {
             document.body.removeChild(a);
         })
         .catch(error => {
+            console.error('Download error:', error);
             alert(`Download error: ${error.message}`);
         });
 }
