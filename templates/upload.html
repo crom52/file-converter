@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Converter - Convert Documents & Images to PDF</title>
+    <script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/converter.css') }}">
+</head>
+<body>
+    <div class="banner">
+        <div class="container">
+            <h1>PDF Converter</h1>
+            <p>Convert your documents and images to PDF instantly</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="main-content">
+            <div class="features">
+                <div class="feature-card">
+                    <h3>Documents</h3>
+                    <p>Convert Word (.docx) files to PDF format instantly</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Images</h3>
+                    <p>Convert JPG, JPEG, PNG images to PDF</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Batch Convert</h3>
+                    <p>Convert up to {{ max_files }} files at once</p>
+                </div>
+            </div>
+
+            <form action="/upload" class="dropzone" id="pdfDropzone">
+                <div class="dz-message">
+                    <div>Drag and drop or click here to browse files</div>
+                    <div class="file-info">Supported formats: DOCX, JPG, JPEG, PNG (Max 16MB per file)</div>
+                </div>
+                <div class="file-counter" style="display: none;">0/{{ max_files }}</div>
+            </form>
+
+            <div class="buttons-container">
+                <button class="clear-all-btn" id="clearAllBtn" style="display: none;">
+                    Clear All Files
+                </button>
+                <button class="convert-all-btn" id="convertAllBtn" disabled>
+                    Convert All Files
+                </button>
+            </div>
+
+            <div class="processing-overlay" id="processingOverlay">
+                <div class="processing-content">
+                    <div class="processing-spinner"></div>
+                    <div>Converting files...</div>
+                </div>
+            </div>
+
+            <div class="alert-overlay" id="alertOverlay">
+                <div class="alert-box">
+                    <div class="alert-title">File Limit Exceeded</div>
+                    <div class="alert-message">You can only upload a maximum of {{ max_files }} files at a time. Please remove some files and try again.</div>
+                    <button class="alert-button" onclick="closeAlert()">OK</button>
+                </div>
+            </div>
+
+            <div class="converted-files-section" style="display: none;">
+                <h3>Converted Files</h3>
+                <div class="converted-files-list">
+                    <!-- Converted files will be added here dynamically -->
+                </div>
+            </div>
+
+            <div class="download-all-section" style="display: none;">
+                <button class="download-all-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    Download All PDFs
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>© 2024 PDF Converter. All files are processed locally and automatically deleted after conversion.</p>
+        </div>
+    </footer>
+
+    <script>
+        window.MAX_FILES = parseInt("{{ max_files }}");
+    </script>
+    <script src="{{ url_for('static', filename='js/converter.js') }}"></script>
+</body>
+</html>
