@@ -16,6 +16,10 @@ function downloadFile(event, filename) {
     fetch(`/download/${filename}`)
         .then(response => {
             if (!response.ok) {
+                if (response.status === 404) {
+                    // Silently ignore 404 errors
+                    throw new Error('skip');
+                }
                 if (response.headers.get('content-type')?.includes('application/json')) {
                     return response.json().then(err => {
                         throw new Error(err.error || 'Download failed');
@@ -36,8 +40,10 @@ function downloadFile(event, filename) {
             document.body.removeChild(a);
         })
         .catch(error => {
-            console.error('Download error:', error);
-            alert(`Download error: ${error.message}`);
+            if (error.message !== 'skip') {
+                console.error('Download error:', error);
+                alert(`Download error: ${error.message}`);
+            }
         });
 }
 
