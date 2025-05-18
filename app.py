@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, send_file, jsonify, abort
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from PIL import Image
 import img2pdf
@@ -30,6 +31,7 @@ IS_PYTHONANYWHERE = 'PYTHONANYWHERE_SITE' in os.environ
 IS_LOCAL = not IS_PYTHONANYWHERE and os.getenv('FLASK_ENV') != 'production'
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
@@ -164,8 +166,12 @@ def upload_form():
 @app.route('/reset', methods=['POST'])
 def reset_session():
     """Reset the conversion session"""
-    force_cleanup_folders()
-    return jsonify({'message': 'Session reset successfully'}), 200
+    try:
+        force_cleanup_folders()
+        return jsonify({'message': 'Session reset successfully'}), 200
+    except Exception as e:
+        print(f"Error in reset_session: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():

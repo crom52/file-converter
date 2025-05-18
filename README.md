@@ -56,7 +56,10 @@ pip install python-dotenv
 
 # Install all other dependencies
 pip install -r requirements.txt
+
+pip install flask-cors==4.0.0
 ```
+
 
 ### 3. Environment Configuration
 
